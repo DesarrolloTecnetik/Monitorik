@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+
+    <!-- Colores Monitorik -->
+    <color name="monitorik_bg">#111239</color>
+    <color name="monitorik_blue">#1A1B4B</color>
+    <color name="monitorik_dark">#0D0D2B</color>
+
+    <!-- Color para el círculo de la notificación (Azul Monitorik) -->
+    <color name="monitorik_push_circle">#4B5FD6</color>
+
+    <!-- Sobrescribimos colores de sistema para eliminar el morado -->
+    <color name="colorPrimary">#111239</color>
+    <color name="colorPrimaryDark">#0D0D2B</color>
+    <color name="colorAccent">#FFFFFF</color>
+
+    <!-- Redirigimos púrpuras de sistema al azul Monitorik para evitar el flash -->
+    <color name="purple_200">#111239</color>
+    <color name="purple_500">#1A1B4B</color>
+    <color name="purple_700">#0D0D2B</color>
+</resources>

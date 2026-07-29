@@ -1,0 +1,26 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- 1. TEMA DE ARRANQUE -->
+    <style name="Theme.Monitorik.Splash" parent="Theme.SplashScreen">
+        <!-- Fondo azul oscuro exacto -->
+        <item name="windowSplashScreenBackground">#111239</item>
+        
+        <!-- Imagen real como fondo de ventana -->
+        <item name="android:windowBackground">@drawable/fondo_monitorik</item>
+        
+        <item name="windowSplashScreenAnimatedIcon">@android:color/transparent</item>
+        <item name="windowSplashScreenAnimationDuration">0</item>
+        <item name="postSplashScreenTheme">@style/Theme.Monitorik</item>
+    </style>
+
+    <!-- 2. TEMA PRINCIPAL: Sin modo pantalla completa/Edge-to-Edge -->
+    <style name="Theme.Monitorik" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">@drawable/fondo_monitorik</item>
+        
+        <!-- Bloqueamos el morado usando el azul de Monitorik -->
+        <item name="colorPrimary">#111239</item>
+        <item name="colorPrimaryDark">#0D0D2B</item>
+        <item name="colorAccent">#FFFFFF</item>
+    </style>
+
+</resources>

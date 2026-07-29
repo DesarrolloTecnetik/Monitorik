@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "621447762782",
+    "project_id": "fir-apk-ef185",
+    "storage_bucket": "fir-apk-ef185.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:621447762782:android:52435112e83902c67a75cf",
+        "android_client_info": {
+          "package_name": "com.example.monitorik"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCdfd4o_L-QczUovWzAD4OsjFxdMuY4ZAo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
