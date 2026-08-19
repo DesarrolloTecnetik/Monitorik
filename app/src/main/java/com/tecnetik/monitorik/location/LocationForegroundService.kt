@@ -51,7 +51,7 @@ class LocationForegroundService : Service() {
 
         const val CHANNEL_ID = "monitorik_location_channel"
         const val NOTIFICATION_ID = 5001
-        const val ACTION_STOP = "com.tecnetik.com.tecnetik.com.tecnetik.monitorik.action.STOP_LOCATION"
+        const val ACTION_STOP = "com.tecnetik.monitorik.action.STOP_LOCATION"
 
         private const val ENDPOINT_URL = "https://tecnserv.com/monitorik/ajax/ubicacion_update.php"
         private const val DEFAULT_INTERVAL_MIN = 5L
@@ -75,6 +75,15 @@ class LocationForegroundService : Service() {
     private var locationCallback: LocationCallback? = null
     private val httpClient = OkHttpClient()
     private var intervalMinutes = DEFAULT_INTERVAL_MIN
+
+    // Refleja el campo "activo" que ya envía el backend (?action=config y la
+    // respuesta de action=reportar). false = fuera de horario laboral / sin horas
+    // extra aprobadas / pausado manualmente por un admin. El servicio NO se
+    // detiene cuando esto es false (sigue habiendo notificación persistente,
+    // como exige foregroundServiceType="location"), pero deja de reportar
+    // ubicación y lo refleja en el texto de la notificación para no generar
+    // desconfianza en el empleado.
+    private var isTrackingActive = true
 
     override fun onCreate() {
         super.onCreate()
@@ -117,9 +126,10 @@ class LocationForegroundService : Service() {
             return START_STICKY
         }
 
-        fetchIntervalConfig { minutes ->
-            Log.d(TAG, "LocationForegroundService: intervalo configurado = $minutes min")
+        fetchIntervalConfig { minutes, activo ->
+            Log.d(TAG, "LocationForegroundService: intervalo configurado = $minutes min, activo=$activo")
             intervalMinutes = minutes
+            updateTrackingState(activo)
             startLocationUpdates()
         }
 
@@ -193,21 +203,38 @@ class LocationForegroundService : Service() {
 
             override fun onResponse(call: Call, response: Response) {
                 Log.d(TAG, "LocationForegroundService.reportLocation: respuesta HTTP ${response.code}")
-                response.close()
-                // 401 = token inválido o revocado (ej. admin lo revocó por robo/pérdida)
-                if (response.code == 401) {
-                    TokenManager.clearToken(this@LocationForegroundService)
-                    stopSelf()
+                response.use { resp ->
+                    // 401 = token inválido o revocado (ej. admin lo revocó por robo/pérdida)
+                    if (resp.code == 401) {
+                        TokenManager.clearToken(this@LocationForegroundService)
+                        stopSelf()
+                        return
+                    }
+                    // El backend refleja aquí el mismo campo "activo" que ?action=config:
+                    // false si el reporte fue rechazado por estar fuera de horario laboral
+                    // (o sin horas extra aprobadas) o por pausa manual de un admin. Como
+                    // este endpoint ya se llama cada ciclo (cada intervalMinutes), es el
+                    // punto natural para detectar el cambio sin agregar peticiones nuevas.
+                    try {
+                        val json = JSONObject(resp.body?.string().orEmpty())
+                        if (json.has("activo")) {
+                            updateTrackingState(json.optBoolean("activo", true))
+                        }
+                    } catch (e: Exception) {
+                        // Respuesta no-JSON o inesperada: no cambiamos el estado actual,
+                        // se reintenta en el siguiente ciclo.
+                        Log.w(TAG, "LocationForegroundService.reportLocation: no se pudo leer 'activo' -> ${e.message}")
+                    }
                 }
             }
         })
     }
 
-    private fun fetchIntervalConfig(onResult: (Long) -> Unit) {
+    private fun fetchIntervalConfig(onResult: (minutes: Long, activo: Boolean) -> Unit) {
         val token = TokenManager.getToken(this)
         if (token == null) {
             Log.w(TAG, "LocationForegroundService.fetchIntervalConfig: sin token, uso intervalo por defecto")
-            onResult(DEFAULT_INTERVAL_MIN)
+            onResult(DEFAULT_INTERVAL_MIN, true)
             return
         }
 
@@ -220,28 +247,50 @@ class LocationForegroundService : Service() {
         httpClient.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
                 Log.e(TAG, "LocationForegroundService.fetchIntervalConfig: fallo de red -> ${e.message}", e)
-                onResult(DEFAULT_INTERVAL_MIN)
+                onResult(DEFAULT_INTERVAL_MIN, true)
             }
 
             override fun onResponse(call: Call, response: Response) {
                 response.use { resp ->
+                    val body = resp.body?.string().orEmpty()
                     val minutes = try {
-                        JSONObject(resp.body?.string().orEmpty())
-                            .optLong("intervalo_minutos", DEFAULT_INTERVAL_MIN)
+                        JSONObject(body).optLong("intervalo_minutos", DEFAULT_INTERVAL_MIN)
                     } catch (e: Exception) {
                         Log.e(TAG, "LocationForegroundService.fetchIntervalConfig: respuesta inválida -> ${e.message}", e)
                         DEFAULT_INTERVAL_MIN
                     }
-                    onResult(minutes)
+                    val activo = try {
+                        JSONObject(body).optBoolean("activo", true)
+                    } catch (e: Exception) {
+                        true
+                    }
+                    onResult(minutes, activo)
                 }
             }
         })
     }
 
+    // Actualiza el estado local y refresca la notificación en pantalla si cambió.
+    // Se llama tanto desde fetchIntervalConfig() (al arrancar/reanudar) como desde
+    // reportLocation() (en cada ciclo posterior), que es donde va a detectarse el
+    // cambio automático diario al terminar el horario laboral del empleado.
+    private fun updateTrackingState(activo: Boolean) {
+        if (activo == isTrackingActive) return
+        Log.d(TAG, "LocationForegroundService: estado de tracking cambió a activo=$activo")
+        isTrackingActive = activo
+        val manager = getSystemService(NotificationManager::class.java)
+        manager?.notify(NOTIFICATION_ID, buildNotification())
+    }
+
     private fun buildNotification(): Notification {
+        val texto = if (isTrackingActive) {
+            "Registrando tu ubicación en segundo plano"
+        } else {
+            "Ubicación en pausa — fuera de tu horario laboral"
+        }
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Monitorik")
-            .setContentText("Registrando tu ubicación en segundo plano")
+            .setContentText(texto)
             .setSmallIcon(android.R.drawable.ic_menu_mylocation) // TODO: reemplazar por ícono propio de la app
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
