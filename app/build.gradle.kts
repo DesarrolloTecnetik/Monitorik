@@ -5,15 +5,15 @@ plugins {
 }
 
 android {
-    namespace = "com.monitorik.monitorik"
-    compileSdk = 34
+    namespace = "com.tecnetik.monitorik"
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.tecnetik.monitorik"
         minSdk = 24
-        targetSdk = 34
-        versionCode = 2
-        versionName = "2.1"
+        targetSdk = 35
+        versionCode = 3
+        versionName = "3.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

@@ -1,4 +1,4 @@
-package com.example.monitorik
+package com.tecnetik.monitorik
 
 import org.junit.Test
 
