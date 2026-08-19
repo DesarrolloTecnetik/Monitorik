@@ -13,6 +13,26 @@
           "package_name": "com.example.monitorik"
         }
       },
+
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCdfd4o_L-QczUovWzAD4OsjFxdMuY4ZAo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:621447762782:android:68bf8d441d28b5e27a75cf",
+        "android_client_info": {
+          "package_name": "com.tecnetik.monitorik"
+        }
+      },
       "oauth_client": [],
       "api_key": [
         {

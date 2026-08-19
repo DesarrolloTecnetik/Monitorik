@@ -51,7 +51,7 @@ class LocationForegroundService : Service() {
 
         const val CHANNEL_ID = "monitorik_location_channel"
         const val NOTIFICATION_ID = 5001
-        const val ACTION_STOP = "com.tecnetik.monitorik.action.STOP_LOCATION"
+        const val ACTION_STOP = "com.tecnetik.com.tecnetik.monitorik.action.STOP_LOCATION"
 
         private const val ENDPOINT_URL = "https://tecnserv.com/monitorik/ajax/ubicacion_update.php"
         private const val DEFAULT_INTERVAL_MIN = 5L
