@@ -365,7 +365,7 @@ adb logcat -c
 adb logcat *:E
 
 # Reinstalar la app
-adb uninstall com.tecnetik.monitoriktik.monitorik
+adb uninstall com.tecnetik.monitoriktik.com.tecnetik.monitorik
 adb install app/build/outputs/apk/debug/app-debug.apk
 ```
 

@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "com.tecnetik.com.tecnetik.monitorik"
+    namespace = "com.monitorik.monitorik"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.tecnetik.com.tecnetik.monitorik"
+        applicationId = "com.tecnetik.monitorik"
         minSdk = 24
         targetSdk = 34
         versionCode = 2
