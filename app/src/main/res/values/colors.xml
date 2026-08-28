@@ -20,4 +20,7 @@
     <color name="purple_200">#111239</color>
     <color name="purple_500">#1A1B4B</color>
     <color name="purple_700">#0D0D2B</color>
+
+
+    <color name="notch_bar_purple">#1A1B4B</color>
 </resources>

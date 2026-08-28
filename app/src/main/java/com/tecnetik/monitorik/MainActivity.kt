@@ -1,5 +1,3 @@
-
-
 package com.tecnetik.monitorik
 
 import android.Manifest
@@ -27,7 +25,10 @@ import android.webkit.WebResourceError
 import android.webkit.SslErrorHandler
 import android.net.http.SslError
 import android.view.View
+import android.view.ViewGroup
 import androidx.core.view.WindowCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import android.webkit.CookieManager
 import android.webkit.GeolocationPermissions
 import android.webkit.PermissionRequest
@@ -65,6 +66,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var reconnectingOverlay: View
     private lateinit var reconnectMessage: TextView
     private lateinit var btnManualRetry: Button
+    private lateinit var notchBar: View
     private var countdownRunnable: Runnable? = null
     private var countdownRemainingSec: Int = 0
     private val URL_DESTINO = "https://tecnserv.com/monitorik/"
@@ -168,7 +170,11 @@ class MainActivity : AppCompatActivity() {
 
         MonitorikApp.activeWebView = null
 
-        WindowCompat.setDecorFitsSystemWindows(window, true)
+        // Desde targetSdk 35+ (Android 15+), Android FUERZA el modo edge-to-edge:
+        // setDecorFitsSystemWindows(window, true) ya no tiene efecto. La app se
+        // dibuja detrás de la barra de estado/notch sí o sí, así que en vez de
+        // pelear contra eso, calculamos el inset real y lo aplicamos a notchBar.
+        WindowCompat.setDecorFitsSystemWindows(window, false)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             window.statusBarColor = Color.parseColor("#111239")
@@ -183,6 +189,30 @@ class MainActivity : AppCompatActivity() {
         reconnectingOverlay = findViewById(R.id.reconnectingOverlay)
         reconnectMessage = findViewById(R.id.reconnectMessage)
         btnManualRetry = findViewById(R.id.btnManualRetry)
+        notchBar = findViewById(R.id.notchBar)
+
+        // Aplica el inset real de la barra de estado/notch/isla dinámica a
+        // notchBar (alto) y al WebView (padding superior), para que la hora,
+        // red y notificaciones del sistema nunca queden tapadas ni mezcladas
+        // con el contenido web.
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.rootLayout)) { _, insets ->
+            val systemBarsInsets = insets.getInsets(WindowInsetsCompat.Type.statusBars())
+            val displayCutoutInsets = insets.getInsets(WindowInsetsCompat.Type.displayCutout())
+            val topInset = maxOf(systemBarsInsets.top, displayCutoutInsets.top)
+
+            notchBar.layoutParams = notchBar.layoutParams.apply { height = topInset }
+            notchBar.requestLayout()
+
+            // IMPORTANTE: usar margin (no padding) en el WebView. El padding
+            // interno en un WebView recorta el contenido superior del
+            // documento en vez de solo desplazarlo, provocando que esa
+            // porción quede inaccesible aunque se haga scroll hasta arriba.
+            val params = webView.layoutParams as ViewGroup.MarginLayoutParams
+            params.topMargin = topInset
+            webView.layoutParams = params
+
+            insets
+        }
 
         // Ya no usamos errorView como texto clickeable de "reintentar",
         // pero lo dejamos referenciado por si el layout aún lo declara.
@@ -212,6 +242,17 @@ class MainActivity : AppCompatActivity() {
 
         if (savedInstanceState != null) {
             webView.restoreState(savedInstanceState)
+
+            // restoreState() restaura la página ya renderizada sin disparar una
+            // carga nueva, por lo que onPageFinished() nunca se ejecuta aquí.
+            // Si dependiéramos solo de onPageFinished para ocultar el splash,
+            // se quedaría visible para siempre (ej. al volver de Ajustes del
+            // sistema tras conceder el permiso de ubicación en segundo plano,
+            // si Android recreó la Activity mientras estaba en background).
+            isWebViewReady = true
+            webView.visibility = View.VISIBLE
+            errorView.visibility = View.GONE
+            imgSplash.visibility = View.GONE
         } else {
             lastUrl = URL_DESTINO
             // Verifica conectividad antes de cargar
@@ -446,7 +487,11 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler?, error: SslError?) {
-                handler?.proceed()
+                // Nunca se acepta el certificado automáticamente: se cancela la carga
+                // ante cualquier error SSL (certificado inválido, caducado, dominio
+                // incorrecto, etc.) para evitar ataques de intermediario (MITM).
+                Log.w("SSL_ERROR", "SSL error detectado, cancelando carga: ${error?.toString()}")
+                handler?.cancel()
             }
         }
 

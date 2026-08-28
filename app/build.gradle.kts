@@ -6,14 +6,14 @@ plugins {
 
 android {
     namespace = "com.tecnetik.monitorik"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.tecnetik.monitorik"
         minSdk = 24
-        targetSdk = 35
-        versionCode = 4
-        versionName = "4.0"
+        targetSdk = 36
+        versionCode = 6
+        versionName = "6.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -43,14 +43,14 @@ dependencies {
     implementation(libs.androidx.constraintlayout)
     implementation("androidx.webkit:webkit:1.10.0")
     implementation("androidx.core:core-splashscreen:1.0.1")
-    
+
     // Firebase
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.messaging)
-    
+
     // Google Play Services Location
     implementation("com.google.android.gms:play-services-location:21.1.0")
-    
+
     // OkHttp para peticiones HTTP
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
