@@ -1,0 +1,89 @@
+diff --git a/app/src/main/java/com/tecnetik/monitorik/MainActivity.kt b/app/src/main/java/com/tecnetik/monitorik/MainActivity.kt
+index ba9e150..e7228e1 100644
+--- a/app/src/main/java/com/tecnetik/monitorik/MainActivity.kt
++++ b/app/src/main/java/com/tecnetik/monitorik/MainActivity.kt
+@@ -67,6 +67,12 @@ class MainActivity : AppCompatActivity() {
+     private lateinit var reconnectMessage: TextView
+     private lateinit var btnManualRetry: Button
+     private lateinit var notchBar: View
++    private lateinit var navBar: View
++    // Margen inferior original de btnManualRetry tal como viene definido en el
++    // XML (layout_margin="16dp"), capturado una sola vez en onCreate. Al inset
++    // de navegación se le suma este valor en vez de un número hardcodeado, para
++    // no desincronizarse si el margen del XML cambia más adelante.
++    private var retryMarginBaseBottomPx = 0
+     private var countdownRunnable: Runnable? = null
+     private var countdownRemainingSec: Int = 0
+     private val URL_DESTINO = "https://tecnserv.com/monitorik/"
+@@ -190,6 +196,8 @@ class MainActivity : AppCompatActivity() {
+         reconnectMessage = findViewById(R.id.reconnectMessage)
+         btnManualRetry = findViewById(R.id.btnManualRetry)
+         notchBar = findViewById(R.id.notchBar)
++        navBar = findViewById(R.id.navBar)
++        retryMarginBaseBottomPx = (btnManualRetry.layoutParams as ViewGroup.MarginLayoutParams).bottomMargin
+ 
+         // Aplica el inset real de la barra de estado/notch/isla dinámica a
+         // notchBar (alto) y al WebView (padding superior), para que la hora,
+@@ -200,17 +208,40 @@ class MainActivity : AppCompatActivity() {
+             val displayCutoutInsets = insets.getInsets(WindowInsetsCompat.Type.displayCutout())
+             val topInset = maxOf(systemBarsInsets.top, displayCutoutInsets.top)
+ 
++            // navigationBars() reporta el inset correcto en ambos casos:
++            // - Barra de 3 botones digitales (Atrás/Home/Recientes): alto fijo,
++            //   normalmente ~48dp.
++            // - Barra de gestos: una franja delgada (~24dp o menos), presente
++            //   igual aunque no haya botones dibujados.
++            // No hay que distinguir el modo manualmente: el sistema ya nos da
++            // el valor correcto para cualquiera de los dos.
++            val navBarInsets = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
++            val bottomInset = navBarInsets.bottom
++
+             notchBar.layoutParams = notchBar.layoutParams.apply { height = topInset }
+             notchBar.requestLayout()
+ 
++            navBar.layoutParams = navBar.layoutParams.apply { height = bottomInset }
++            navBar.requestLayout()
++
+             // IMPORTANTE: usar margin (no padding) en el WebView. El padding
+             // interno en un WebView recorta el contenido superior del
+             // documento en vez de solo desplazarlo, provocando que esa
+             // porción quede inaccesible aunque se haga scroll hasta arriba.
+             val params = webView.layoutParams as ViewGroup.MarginLayoutParams
+             params.topMargin = topInset
++            params.bottomMargin = bottomInset
+             webView.layoutParams = params
+ 
++            // El botón de reintento manual vive dentro de reconnectingOverlay,
++            // pegado a la esquina inferior derecha con layout_margin fijo de
++            // 16dp. Sin esto, con la barra de 3 botones quedaría parcialmente
++            // tapado por ella. Se conserva el margen original de 16dp y se le
++            // suma el inset real.
++            val retryParams = btnManualRetry.layoutParams as ViewGroup.MarginLayoutParams
++            retryParams.bottomMargin = retryMarginBaseBottomPx + bottomInset
++            btnManualRetry.layoutParams = retryParams
++
+             insets
+         }
+ 
+diff --git a/app/src/main/res/layout/activity_main.xml b/app/src/main/res/layout/activity_main.xml
+index 369ae03..3d6acc4 100644
+--- a/app/src/main/res/layout/activity_main.xml
++++ b/app/src/main/res/layout/activity_main.xml
+@@ -120,4 +120,16 @@
+         android:layout_gravity="top"
+         android:background="@color/notch_bar_purple" />
+ 
++    <!-- Franja de la barra de navegación inferior: cubre tanto los 3 botones
++         digitales (Atrás/Home/Recientes) como la barra delgada de gestos,
++         según el inset real que reporte el sistema. Se pinta por encima del
++         WebView igual que notchBar, con el mismo color que
++         window.navigationBarColor para que no se note la unión. -->
++    <View
++        android:id="@+id/navBar"
++        android:layout_width="match_parent"
++        android:layout_height="0dp"
++        android:layout_gravity="bottom"
++        android:background="@color/monitorik_dark" />
++
+ </FrameLayout>
+\ No newline at end of file

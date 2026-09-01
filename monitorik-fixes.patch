@@ -1,0 +1,207 @@
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+index 6bc2d40..c9d733d 100644
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -20,7 +20,8 @@ android {
+ 
+     buildTypes {
+         release {
+-            isMinifyEnabled = false
++            isMinifyEnabled = true
++            isShrinkResources = true
+             proguardFiles(
+                 getDefaultProguardFile("proguard-android-optimize.txt"),
+                 "proguard-rules.pro"
+diff --git a/app/proguard-rules.pro b/app/proguard-rules.pro
+index 481bb43..8852516 100644
+--- a/app/proguard-rules.pro
++++ b/app/proguard-rules.pro
+@@ -14,8 +14,50 @@
+ 
+ # Uncomment this to preserve the line number information for
+ # debugging stack traces.
+-#-keepattributes SourceFile,LineNumberTable
++-keepattributes SourceFile,LineNumberTable
+ 
+ # If you keep the line number information, uncomment this to
+ # hide the original source file name.
+-#-renamesourcefileattribute SourceFile
+\ No newline at end of file
++#-renamesourcefileattribute SourceFile
++
++# ---------------------------------------------------------------------------
++# Reglas específicas de Monitorik
++# ---------------------------------------------------------------------------
++
++# WebView + JS bridge: si en algún punto se agrega addJavascriptInterface,
++# las clases/métodos expuestos a JS deben tener @JavascriptInterface y
++# quedar protegidos de la ofuscación, o el WebView no podrá invocarlos.
++-keepclassmembers class * {
++    @android.webkit.JavascriptInterface <methods>;
++}
++
++# Firebase Cloud Messaging: el servicio se referencia desde el manifest, y
++# Firebase usa reflexión internamente para inicializar sus componentes.
++-keep class com.google.firebase.messaging.** { *; }
++-keep class com.tecnetik.monitorik.MyFirebaseMessagingService { *; }
++-keep class com.tecnetik.monitorik.MonitorikApp { *; }
++-dontwarn com.google.firebase.**
++
++# Google Play Services Location (FusedLocationProviderClient, LocationRequest,
++# LocationCallback, etc.) — la librería ya trae sus propias reglas via su AAR,
++# pero se refuerza por si el modo full de R8 es más agresivo que lo esperado.
++-keep class com.google.android.gms.location.** { *; }
++-dontwarn com.google.android.gms.**
++
++# OkHttp / Okio: reglas recomendadas oficialmente por OkHttp para evitar
++# warnings y fallos por referencias a clases opcionales de plataformas
++# (Conscrypt, Android internals) que no siempre están presentes en runtime.
++-dontwarn okhttp3.**
++-dontwarn okio.**
++-dontwarn javax.annotation.**
++-keepnames class okhttp3.internal.publicsuffix.PublicSuffixDatabase
++
++# org.json (JSONObject) es parte del SDK de Android, no se ofusca por
++# defecto, pero se deja explícito por claridad ya que es el mecanismo de
++# serialización usado en TokenManager y LocationForegroundService.
++-keep class org.json.** { *; }
++
++# Clases del paquete de ubicación en background: usan reflexión indirecta
++# vía companion objects y callbacks anónimos; se protegen sus nombres para
++# que los logs (Log.e con stacktrace) sigan siendo legibles en Play Console.
++-keep class com.tecnetik.monitorik.location.** { *; }
+\ No newline at end of file
+diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
+index ae77059..f5d33ad 100644
+--- a/app/src/main/AndroidManifest.xml
++++ b/app/src/main/AndroidManifest.xml
+@@ -24,7 +24,7 @@
+         android:icon="@mipmap/ic_launcher"
+         android:label="@string/app_name"
+         android:theme="@style/Theme.Monitorik"
+-        android:usesCleartextTraffic="true"
++        android:usesCleartextTraffic="false"
+         tools:targetApi="31">
+ 
+         <!-- Configuración por defecto para FCM -->
+diff --git a/app/src/main/java/com/tecnetik/monitorik/MainActivity.kt b/app/src/main/java/com/tecnetik/monitorik/MainActivity.kt
+index ee176c2..ba9e150 100644
+--- a/app/src/main/java/com/tecnetik/monitorik/MainActivity.kt
++++ b/app/src/main/java/com/tecnetik/monitorik/MainActivity.kt
+@@ -345,11 +345,25 @@ class MainActivity : AppCompatActivity() {
+         }
+     }
+ 
++    // Escapa un valor para insertarlo de forma segura dentro de un literal de
++    // JS entre comillas simples. Sin esto, un valor con salto de línea o
++    // comillas sin escapar (token, URL, etc.) rompe el script inyectado con
++    // evaluateJavascript en vez de simplemente fallar silenciosamente.
++    private fun jsString(value: String?): String {
++        if (value == null) return "null"
++        val escaped = value
++            .replace("\\", "\\\\")
++            .replace("'", "\\'")
++            .replace("\n", "\\n")
++            .replace("\r", "\\r")
++        return "'$escaped'"
++    }
++
+     fun invocarAccionPush(type: String, actionUrl: String, clickAction: String) {
+-        val t  = type.replace("\\", "\\\\").replace("'", "\\'")
+-        val a  = actionUrl.replace("\\", "\\\\").replace("'", "\\'")
+-        val c  = clickAction.replace("\\", "\\\\").replace("'", "\\'")
+-        val js = "if(typeof recibirAccionPush==='function'){recibirAccionPush('$t','$a','$c');}else{console.warn('recibirAccionPush no definida');}"
++        val t = jsString(type)
++        val a = jsString(actionUrl)
++        val c = jsString(clickAction)
++        val js = "if(typeof recibirAccionPush==='function'){recibirAccionPush($t,$a,$c);}else{console.warn('recibirAccionPush no definida');}"
+ 
+         runOnUiThread {
+             Log.d("FCM_DEBUG", "Ejecutando JS: $js")
+@@ -369,7 +383,7 @@ class MainActivity : AppCompatActivity() {
+     private fun enviarTokenFcmAWebView(token: String) {
+         if (!isWebViewReady) return
+         webView.evaluateJavascript(
+-            "if(window.recibirTokenFCM){recibirTokenFCM('$token');}",
++            "if(window.recibirTokenFCM){recibirTokenFCM(${jsString(token)});}",
+             null
+         )
+     }
+@@ -387,7 +401,12 @@ class MainActivity : AppCompatActivity() {
+             allowContentAccess = true
+             loadWithOverviewMode = true
+             useWideViewPort = true
+-            mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
++            // No hay ninguna dependencia de contenido HTTP en tecnserv.com; con
++            // ALWAYS_ALLOW se permitía cargar recursos HTTP dentro de la página
++            // HTTPS, lo que abre la puerta a inyección de contenido vía MITM en
++            // redes no confiables (wifi público, etc.). COMPATIBILITY_MODE
++            // bloquea eso y solo permite excepciones históricas del propio WebView.
++            mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+             javaScriptCanOpenWindowsAutomatically = true
+         }
+ 
+diff --git a/app/src/main/java/com/tecnetik/monitorik/MyFirebaseMessagingService.kt b/app/src/main/java/com/tecnetik/monitorik/MyFirebaseMessagingService.kt
+index c51ec71..9616ec6 100644
+--- a/app/src/main/java/com/tecnetik/monitorik/MyFirebaseMessagingService.kt
++++ b/app/src/main/java/com/tecnetik/monitorik/MyFirebaseMessagingService.kt
+@@ -24,14 +24,18 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
+         val body        = data["body"]         ?: remoteMessage.notification?.body ?: ""
+         val notifId     = data["notif_id"]     ?: System.currentTimeMillis().toString()
+ 
+-        mostrarNotificacion(title, body, clickAction, actionUrl, type, notifId)
+-
+         val webView = MonitorikApp.activeWebView
+         if (webView != null) {
++            // App en primer plano: se le pasa el push directo al WebView vía JS.
++            // Si además mostráramos la notificación del sistema, el usuario que
++            // ya está usando la app vería un doble aviso (notificación + acción
++            // dentro de la página) por el mismo evento.
+             webView.post {
+                 val js = buildJsCall(type, actionUrl, clickAction)
+                 webView.evaluateJavascript(js, null)
+             }
++        } else {
++            mostrarNotificacion(title, body, clickAction, actionUrl, type, notifId)
+         }
+     }
+ 
+@@ -85,7 +89,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
+         Log.d("FCM", "Nuevo Token: $token")
+         MonitorikApp.activeWebView?.post {
+             MonitorikApp.activeWebView?.evaluateJavascript(
+-                "if(window.recibirTokenFCM) { recibirTokenFCM('$token'); }",
++                "if(window.recibirTokenFCM) { recibirTokenFCM(${jsString(token)}); }",
+                 null
+             )
+         }
+@@ -100,7 +104,11 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
+ 
+     private fun jsString(value: String?): String {
+         if (value == null) return "null"
+-        val escaped = value.replace("\\", "\\\\").replace("'", "\\'")
++        val escaped = value
++            .replace("\\", "\\\\")
++            .replace("'", "\\'")
++            .replace("\n", "\\n")
++            .replace("\r", "\\r")
+         return "'$escaped'"
+     }
+ }
+diff --git a/gradle.properties b/gradle.properties
+index 20e2a01..7ff15dd 100644
+--- a/gradle.properties
++++ b/gradle.properties
+@@ -20,4 +20,9 @@ kotlin.code.style=official
+ # Enables namespacing of each library's R class so that its R class includes only the
+ # resources declared in the library itself and none from the library's dependencies,
+ # thereby reducing the size of the R class for that library
+-android.nonTransitiveRClass=true
+\ No newline at end of file
++android.nonTransitiveRClass=true
++# R8 en modo completo: ofuscación y shrinking más agresivos que el modo
++# compatible con ProGuard (usado por defecto). Requiere que las reglas de
++# -keep en proguard-rules.pro estén completas (Firebase, OkHttp, modelos
++# JSON, etc.), o el build de release puede romperse en runtime.
++android.enableR8.fullMode=true
+\ No newline at end of file

@@ -120,4 +120,16 @@
         android:layout_gravity="top"
         android:background="@color/notch_bar_purple" />
 
+    <!-- Franja de la barra de navegación inferior: cubre tanto los 3 botones
+         digitales (Atrás/Home/Recientes) como la barra delgada de gestos,
+         según el inset real que reporte el sistema. Se pinta por encima del
+         WebView igual que notchBar, con el mismo color que
+         window.navigationBarColor para que no se note la unión. -->
+    <View
+        android:id="@+id/navBar"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_gravity="bottom"
+        android:background="@color/monitorik_dark" />
+
 </FrameLayout>

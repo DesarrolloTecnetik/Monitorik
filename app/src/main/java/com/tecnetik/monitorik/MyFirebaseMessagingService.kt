@@ -24,14 +24,18 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val body        = data["body"]         ?: remoteMessage.notification?.body ?: ""
         val notifId     = data["notif_id"]     ?: System.currentTimeMillis().toString()
 
-        mostrarNotificacion(title, body, clickAction, actionUrl, type, notifId)
-
         val webView = MonitorikApp.activeWebView
         if (webView != null) {
+            // App en primer plano: se le pasa el push directo al WebView vía JS.
+            // Si además mostráramos la notificación del sistema, el usuario que
+            // ya está usando la app vería un doble aviso (notificación + acción
+            // dentro de la página) por el mismo evento.
             webView.post {
                 val js = buildJsCall(type, actionUrl, clickAction)
                 webView.evaluateJavascript(js, null)
             }
+        } else {
+            mostrarNotificacion(title, body, clickAction, actionUrl, type, notifId)
         }
     }
 
@@ -85,7 +89,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         Log.d("FCM", "Nuevo Token: $token")
         MonitorikApp.activeWebView?.post {
             MonitorikApp.activeWebView?.evaluateJavascript(
-                "if(window.recibirTokenFCM) { recibirTokenFCM('$token'); }",
+                "if(window.recibirTokenFCM) { recibirTokenFCM(${jsString(token)}); }",
                 null
             )
         }
@@ -100,7 +104,11 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
 
     private fun jsString(value: String?): String {
         if (value == null) return "null"
-        val escaped = value.replace("\\", "\\\\").replace("'", "\\'")
+        val escaped = value
+            .replace("\\", "\\\\")
+            .replace("'", "\\'")
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
         return "'$escaped'"
     }
 }

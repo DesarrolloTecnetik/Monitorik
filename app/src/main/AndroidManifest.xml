@@ -24,7 +24,7 @@
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:theme="@style/Theme.Monitorik"
-        android:usesCleartextTraffic="true"
+        android:usesCleartextTraffic="false"
         tools:targetApi="31">
 
         <!-- Configuración por defecto para FCM -->

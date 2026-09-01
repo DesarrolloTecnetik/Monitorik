@@ -67,6 +67,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var reconnectMessage: TextView
     private lateinit var btnManualRetry: Button
     private lateinit var notchBar: View
+    private lateinit var navBar: View
+    // Margen inferior original de btnManualRetry tal como viene definido en el
+    // XML (layout_margin="16dp"), capturado una sola vez en onCreate. Al inset
+    // de navegación se le suma este valor en vez de un número hardcodeado, para
+    // no desincronizarse si el margen del XML cambia más adelante.
+    private var retryMarginBaseBottomPx = 0
     private var countdownRunnable: Runnable? = null
     private var countdownRemainingSec: Int = 0
     private val URL_DESTINO = "https://tecnserv.com/monitorik/"
@@ -190,6 +196,8 @@ class MainActivity : AppCompatActivity() {
         reconnectMessage = findViewById(R.id.reconnectMessage)
         btnManualRetry = findViewById(R.id.btnManualRetry)
         notchBar = findViewById(R.id.notchBar)
+        navBar = findViewById(R.id.navBar)
+        retryMarginBaseBottomPx = (btnManualRetry.layoutParams as ViewGroup.MarginLayoutParams).bottomMargin
 
         // Aplica el inset real de la barra de estado/notch/isla dinámica a
         // notchBar (alto) y al WebView (padding superior), para que la hora,
@@ -200,8 +208,21 @@ class MainActivity : AppCompatActivity() {
             val displayCutoutInsets = insets.getInsets(WindowInsetsCompat.Type.displayCutout())
             val topInset = maxOf(systemBarsInsets.top, displayCutoutInsets.top)
 
+            // navigationBars() reporta el inset correcto en ambos casos:
+            // - Barra de 3 botones digitales (Atrás/Home/Recientes): alto fijo,
+            //   normalmente ~48dp.
+            // - Barra de gestos: una franja delgada (~24dp o menos), presente
+            //   igual aunque no haya botones dibujados.
+            // No hay que distinguir el modo manualmente: el sistema ya nos da
+            // el valor correcto para cualquiera de los dos.
+            val navBarInsets = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
+            val bottomInset = navBarInsets.bottom
+
             notchBar.layoutParams = notchBar.layoutParams.apply { height = topInset }
             notchBar.requestLayout()
+
+            navBar.layoutParams = navBar.layoutParams.apply { height = bottomInset }
+            navBar.requestLayout()
 
             // IMPORTANTE: usar margin (no padding) en el WebView. El padding
             // interno en un WebView recorta el contenido superior del
@@ -209,7 +230,17 @@ class MainActivity : AppCompatActivity() {
             // porción quede inaccesible aunque se haga scroll hasta arriba.
             val params = webView.layoutParams as ViewGroup.MarginLayoutParams
             params.topMargin = topInset
+            params.bottomMargin = bottomInset
             webView.layoutParams = params
+
+            // El botón de reintento manual vive dentro de reconnectingOverlay,
+            // pegado a la esquina inferior derecha con layout_margin fijo de
+            // 16dp. Sin esto, con la barra de 3 botones quedaría parcialmente
+            // tapado por ella. Se conserva el margen original de 16dp y se le
+            // suma el inset real.
+            val retryParams = btnManualRetry.layoutParams as ViewGroup.MarginLayoutParams
+            retryParams.bottomMargin = retryMarginBaseBottomPx + bottomInset
+            btnManualRetry.layoutParams = retryParams
 
             insets
         }
@@ -345,11 +376,25 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // Escapa un valor para insertarlo de forma segura dentro de un literal de
+    // JS entre comillas simples. Sin esto, un valor con salto de línea o
+    // comillas sin escapar (token, URL, etc.) rompe el script inyectado con
+    // evaluateJavascript en vez de simplemente fallar silenciosamente.
+    private fun jsString(value: String?): String {
+        if (value == null) return "null"
+        val escaped = value
+            .replace("\\", "\\\\")
+            .replace("'", "\\'")
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+        return "'$escaped'"
+    }
+
     fun invocarAccionPush(type: String, actionUrl: String, clickAction: String) {
-        val t  = type.replace("\\", "\\\\").replace("'", "\\'")
-        val a  = actionUrl.replace("\\", "\\\\").replace("'", "\\'")
-        val c  = clickAction.replace("\\", "\\\\").replace("'", "\\'")
-        val js = "if(typeof recibirAccionPush==='function'){recibirAccionPush('$t','$a','$c');}else{console.warn('recibirAccionPush no definida');}"
+        val t = jsString(type)
+        val a = jsString(actionUrl)
+        val c = jsString(clickAction)
+        val js = "if(typeof recibirAccionPush==='function'){recibirAccionPush($t,$a,$c);}else{console.warn('recibirAccionPush no definida');}"
 
         runOnUiThread {
             Log.d("FCM_DEBUG", "Ejecutando JS: $js")
@@ -369,7 +414,7 @@ class MainActivity : AppCompatActivity() {
     private fun enviarTokenFcmAWebView(token: String) {
         if (!isWebViewReady) return
         webView.evaluateJavascript(
-            "if(window.recibirTokenFCM){recibirTokenFCM('$token');}",
+            "if(window.recibirTokenFCM){recibirTokenFCM(${jsString(token)});}",
             null
         )
     }
@@ -387,7 +432,12 @@ class MainActivity : AppCompatActivity() {
             allowContentAccess = true
             loadWithOverviewMode = true
             useWideViewPort = true
-            mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+            // No hay ninguna dependencia de contenido HTTP en tecnserv.com; con
+            // ALWAYS_ALLOW se permitía cargar recursos HTTP dentro de la página
+            // HTTPS, lo que abre la puerta a inyección de contenido vía MITM en
+            // redes no confiables (wifi público, etc.). COMPATIBILITY_MODE
+            // bloquea eso y solo permite excepciones históricas del propio WebView.
+            mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
             javaScriptCanOpenWindowsAutomatically = true
         }
 
