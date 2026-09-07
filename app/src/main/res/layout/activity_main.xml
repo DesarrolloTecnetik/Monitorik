@@ -118,7 +118,7 @@
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_gravity="top"
-        android:background="@color/notch_bar_purple" />
+        android:background="@color/system_bar_white" />
 
     <!-- Franja de la barra de navegación inferior: cubre tanto los 3 botones
          digitales (Atrás/Home/Recientes) como la barra delgada de gestos,
@@ -130,6 +130,6 @@
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_gravity="bottom"
-        android:background="@color/monitorik_dark" />
+        android:background="@color/system_bar_white" />
 
 </FrameLayout>

@@ -111,6 +111,12 @@ class MainActivity : AppCompatActivity() {
     private var isWebViewReady = false
     private var pendingFcmToken: String? = null
 
+    // Solicitud de permiso de cámara/micrófono hecha por la propia página
+    // web (WebRTC/getUserMedia, ej. videollamadas o notas de voz). Se
+    // guarda mientras se pide el permiso real de Android, para poder
+    // resolverla (grant/deny) cuando el usuario responda.
+    private var pendingWebPermissionRequest: PermissionRequest? = null
+
     private var _isInBackground = false
     private var _pendingPushType: String? = null
     private var _pendingActionUrl: String? = null
@@ -155,6 +161,31 @@ class MainActivity : AppCompatActivity() {
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
+        // Flujo 1: permiso de cámara/micrófono pedido por la propia página
+        // web (WebRTC/getUserMedia). Se resuelve primero y aparte del flujo
+        // de selector de archivos, porque ambos usan el mismo launcher pero
+        // nunca se disparan al mismo tiempo.
+        pendingWebPermissionRequest?.let { request ->
+            pendingWebPermissionRequest = null
+            val recursosConcedidos = request.resources.filter { recurso ->
+                when (recurso) {
+                    PermissionRequest.RESOURCE_AUDIO_CAPTURE ->
+                        permissions[Manifest.permission.RECORD_AUDIO] == true
+                    PermissionRequest.RESOURCE_VIDEO_CAPTURE ->
+                        permissions[Manifest.permission.CAMERA] == true
+                    else -> true
+                }
+            }.toTypedArray()
+
+            if (recursosConcedidos.isNotEmpty()) {
+                request.grant(recursosConcedidos)
+            } else {
+                request.deny()
+            }
+            return@registerForActivityResult
+        }
+
+        // Flujo 2: selector de archivos (subir foto/documento)
         val cameraGranted = permissions[Manifest.permission.CAMERA] == true
         val readGranted = when {
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU ->
@@ -211,9 +242,26 @@ class MainActivity : AppCompatActivity() {
         // pelear contra eso, calculamos el inset real y lo aplicamos a notchBar.
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
+        // Mientras se muestra la imagen de carga (imgSplash), notchBar/navBar
+        // quedan del mismo morado que el splash (ver activity_main.xml), para
+        // que no haya un parpadeo blanco antes de que la imagen termine de
+        // pintarse. Recién cuando la splash se oculta (onPageFinished o el
+        // restoreState de más abajo) se cambia a blanco fijo con
+        // fijarBarrasBlancas().
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             window.statusBarColor = Color.parseColor("#111239")
             window.navigationBarColor = Color.parseColor("#0D0D2B")
+        }
+
+        // Android agrega automáticamente un "scrim" oscuro (línea/sombra) sobre
+        // la barra de navegación y la de estado cuando detecta que el color de
+        // fondo es claro, para mantener contraste con los iconos del sistema.
+        // Eso se ve como una línea negra pegada arriba de la barra de
+        // navegación en cuanto pasemos a blanco fijo más adelante, así que la
+        // desactivamos desde ya.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isNavigationBarContrastEnforced = false
+            window.isStatusBarContrastEnforced = false
         }
 
         setContentView(R.layout.activity_main)
@@ -313,6 +361,7 @@ class MainActivity : AppCompatActivity() {
             webView.visibility = View.VISIBLE
             errorView.visibility = View.GONE
             imgSplash.visibility = View.GONE
+            fijarBarrasBlancas()
         } else {
             lastUrl = URL_DESTINO
             // Verifica conectividad antes de cargar
@@ -550,26 +599,40 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // NOTA: una vez que se oculta la splash, la barra de estado y la de
+    // navegación quedan blancas fijas (ver fijarBarrasBlancas()). Se deja el
+    // puente JS conectado por compatibilidad, pero estas funciones ya no
+    // aplican el color detectado en la web para no pisar el blanco fijo.
     private fun aplicarColorNotch(hex: String?) {
-        val color = parseColorSeguro(hex) ?: return
-        if (color == currentNotchColor) return
-        colorAnimNotch = animarColorDeVista(notchBar, currentNotchColor, color, colorAnimNotch)
-        currentNotchColor = color
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            window.statusBarColor = color
-        }
-        ajustarIconosSistemaSegunColor(color, esBarraDeEstado = true)
+        // Sin efecto: color fijo en blanco.
     }
 
     private fun aplicarColorNavBar(hex: String?) {
-        val color = parseColorSeguro(hex) ?: return
-        if (color == currentNavColor) return
-        colorAnimNav = animarColorDeVista(navBar, currentNavColor, color, colorAnimNav)
-        currentNavColor = color
+        // Sin efecto: color fijo en blanco.
+    }
+
+    // Se llama una sola vez, en el momento en que la imagen de carga
+    // (imgSplash) se oculta: pasa notchBar/navBar y las barras del sistema
+    // de morado (color de la splash) a blanco fijo.
+    private var barrasYaEnBlanco = false
+    private fun fijarBarrasBlancas() {
+        if (barrasYaEnBlanco) return
+        barrasYaEnBlanco = true
+
+        notchBar.setBackgroundColor(Color.WHITE)
+        navBar.setBackgroundColor(Color.WHITE)
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            window.navigationBarColor = color
+            window.statusBarColor = Color.WHITE
+            window.navigationBarColor = Color.WHITE
         }
-        ajustarIconosSistemaSegunColor(color, esBarraDeEstado = false)
+
+        // Con fondo blanco, los iconos del sistema (reloj, batería,
+        // navegación) deben pasar a modo oscuro para seguir siendo legibles.
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = true
+            isAppearanceLightNavigationBars = true
+        }
     }
 
     // Transición suave en vez de un cambio brusco de color, para que no se
@@ -694,6 +757,7 @@ class MainActivity : AppCompatActivity() {
                 imgSplash.animate().alpha(0f).setDuration(600).withEndAction {
                     imgSplash.visibility = View.GONE
                 }
+                fijarBarrasBlancas()
 
                 // Reinyectamos el detector de color en cada navegación: cada
                 // documento nuevo pierde el estado de window, así que el flag
@@ -757,7 +821,35 @@ class MainActivity : AppCompatActivity() {
 
         webView.webChromeClient = object : WebChromeClient() {
             override fun onPermissionRequest(request: PermissionRequest) {
-                request.grant(request.resources)
+                // Antes se hacía request.grant(request.resources) a ciegas,
+                // lo cual solo funciona si Android ya tenía CAMERA/RECORD_AUDIO
+                // concedidos de antemano (ya no se piden al inicio). Ahora se
+                // verifica el permiso real de Android y, si falta, se pide en
+                // el momento en que la web realmente lo necesita (ej. al
+                // iniciar una videollamada o grabar audio), antes de conceder
+                // el recurso al WebView.
+                runOnUiThread {
+                    val recursosSolicitados = request.resources
+                    val permisosAndroidNecesarios = mutableListOf<String>()
+
+                    if (recursosSolicitados.contains(PermissionRequest.RESOURCE_AUDIO_CAPTURE)) {
+                        permisosAndroidNecesarios.add(Manifest.permission.RECORD_AUDIO)
+                    }
+                    if (recursosSolicitados.contains(PermissionRequest.RESOURCE_VIDEO_CAPTURE)) {
+                        permisosAndroidNecesarios.add(Manifest.permission.CAMERA)
+                    }
+
+                    val faltantes = permisosAndroidNecesarios.filter {
+                        ContextCompat.checkSelfPermission(this@MainActivity, it) != PackageManager.PERMISSION_GRANTED
+                    }
+
+                    if (faltantes.isEmpty()) {
+                        request.grant(recursosSolicitados)
+                    } else {
+                        pendingWebPermissionRequest = request
+                        requestPermissionLauncher.launch(faltantes.toTypedArray())
+                    }
+                }
             }
 
             override fun onGeolocationPermissionsShowPrompt(
@@ -920,8 +1012,10 @@ class MainActivity : AppCompatActivity() {
         val lista = mutableListOf<String>()
         lista.add(Manifest.permission.ACCESS_FINE_LOCATION)
         lista.add(Manifest.permission.ACCESS_COARSE_LOCATION)
-        lista.add(Manifest.permission.CAMERA)
-        lista.add(Manifest.permission.RECORD_AUDIO)
+        // CAMERA y RECORD_AUDIO ya NO se piden aquí al arrancar la app: se
+        // solicitan en el momento real en que se usan por primera vez
+        // (CAMERA en onShowFileChooser al subir una foto; CAMERA/RECORD_AUDIO
+        // en onPermissionRequest cuando la web pide getUserMedia).
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             lista.add(Manifest.permission.POST_NOTIFICATIONS)
@@ -1022,47 +1116,101 @@ class MainActivity : AppCompatActivity() {
         // antes de que el usuario responda al primero.
         if (dialogoDivulgacionBackground?.isShowing == true) return
 
-        dialogoDivulgacionBackground = AlertDialog.Builder(this)
-            .setTitle("Ubicación en segundo plano")
-            .setMessage(
-                "Monitorik necesita acceder a tu ubicación incluso cuando la app está " +
-                        "minimizada o la pantalla apagada, para que tu empresa pueda dar " +
-                        "seguimiento a tu jornada laboral. Puedes desactivar esto en cualquier " +
-                        "momento desde Ajustes del sistema."
-            )
-            .setPositiveButton("Continuar") { _, _ ->
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    // Desde Android 11, el diálogo del sistema para
-                    // ACCESS_BACKGROUND_LOCATION ya NO ofrece la opción
-                    // "Permitir todo el tiempo" si se pide con
-                    // requestPermissions(): como mucho da "Mientras se usa
-                    // la app" o "Denegar", por lo que el permiso de fondo
-                    // nunca queda concedido y el diálogo volvería a salir
-                    // en un loop. La única forma de conseguirlo es mandar
-                    // al usuario a Ajustes de la app.
-                    abrirAjustesDeUbicacion()
-                } else {
-                    ActivityCompat.requestPermissions(
-                        this,
-                        arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION),
-                        REQUEST_BACKGROUND_LOCATION
-                    )
-                }
-            }
+        // Diálogo con layout propio (dialog_ubicacion_background.xml) en vez
+        // del AlertDialog.Builder por defecto, para que se vea como el modal
+        // nativo de permisos de Android (icono en cuadrado, título en
+        // negrita, botones tipo pill apilados) en lugar del diálogo gris de
+        // dos botones en línea.
+        val vistaDialogo = layoutInflater.inflate(R.layout.dialog_ubicacion_background, null)
+
+        val dialogo = AlertDialog.Builder(this)
+            .setView(vistaDialogo)
+            .setCancelable(true)
             .setOnDismissListener { dialogoDivulgacionBackground = null }
-            .setNegativeButton("Ahora no", null)
-            .show()
+            .create()
+
+        // Fondo transparente en la ventana del diálogo: las esquinas
+        // redondeadas las da bg_dialog_permiso.xml sobre el LinearLayout
+        // raíz; si no se quita el fondo por defecto del diálogo, se verían
+        // esquinas cuadradas por detrás.
+        dialogo.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
+
+        vistaDialogo.findViewById<Button>(R.id.btnContinuarUbicacion).setOnClickListener {
+            dialogo.dismiss()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                // Desde Android 11, el diálogo del sistema para
+                // ACCESS_BACKGROUND_LOCATION ya NO ofrece la opción
+                // "Permitir todo el tiempo" si se pide con
+                // requestPermissions(): como mucho da "Mientras se usa
+                // la app" o "Denegar", por lo que el permiso de fondo
+                // nunca queda concedido y el diálogo volvería a salir
+                // en un loop. La única forma de conseguirlo es mandar
+                // al usuario a Ajustes de la app.
+                abrirAjustesDeUbicacion()
+            } else {
+                ActivityCompat.requestPermissions(
+                    this,
+                    arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION),
+                    REQUEST_BACKGROUND_LOCATION
+                )
+            }
+        }
+
+        vistaDialogo.findViewById<Button>(R.id.btnAhoraNoUbicacion).setOnClickListener {
+            dialogo.dismiss()
+        }
+
+        dialogoDivulgacionBackground = dialogo
+        dialogo.show()
     }
 
     // Abre la pantalla de detalles de la app en Ajustes del sistema, donde
     // Android 11+ permite cambiar el permiso de ubicación a "Permitir todo
     // el tiempo". Es la única vía posible en R+ para ese permiso.
+    // Intenta llegar exactamente a "Permiso de Ubicación" (con las opciones
+    // "Permitir siempre / Permitir solo mientras se usa / Preguntar siempre
+    // / No permitir") con un solo tap, con dos niveles de respaldo si el
+    // fabricante no soporta el más específico:
+    //   1) android.intent.action.MANAGE_APP_PERMISSION → aterriza exacto en
+    //      el permiso de Ubicación. No es parte del SDK público; algunos
+    //      Ajustes personalizados (ej. MIUI/HyperOS) no lo implementan.
+    //   2) android.intent.action.MANAGE_APP_PERMISSIONS (plural) → aterriza
+    //      en la lista "Permisos de la aplicación" (un tap más para llegar a
+    //      Ubicación). Confirmado que sí funciona en MIUI/HyperOS.
+    //   3) Settings.ACTION_APPLICATION_DETAILS_SETTINGS → Ajustes general de
+    //      la app. Único que el SDK público garantiza en el 100% de
+    //      dispositivos.
     private fun abrirAjustesDeUbicacion() {
-        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+        val intentPermisoUbicacion = Intent("android.intent.action.MANAGE_APP_PERMISSION").apply {
+            putExtra(Intent.EXTRA_PACKAGE_NAME, packageName)
+            putExtra("android.intent.extra.PERMISSION_NAME", Manifest.permission.ACCESS_FINE_LOCATION)
+            putExtra("android.intent.extra.PERMISSION_GROUP_NAME", "android.permission-group.LOCATION")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                putExtra(Intent.EXTRA_USER, android.os.Process.myUserHandle())
+            }
+        }
+        try {
+            startActivity(intentPermisoUbicacion)
+            return
+        } catch (e: Exception) {
+            Log.w("FCM_DEBUG", "No se pudo abrir el permiso de Ubicación exacto, se prueba la lista de permisos: ${e.message}")
+        }
+
+        val intentPermisosApp = Intent("android.intent.action.MANAGE_APP_PERMISSIONS").apply {
+            putExtra(Intent.EXTRA_PACKAGE_NAME, packageName)
+        }
+        try {
+            startActivity(intentPermisosApp)
+            return
+        } catch (e: Exception) {
+            Log.w("FCM_DEBUG", "No se pudo abrir la lista de permisos, se usa Ajustes de la app: ${e.message}")
+        }
+
+        val intentAjustesApp = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
             data = Uri.fromParts("package", packageName, null)
         }
         try {
-            startActivity(intent)
+            startActivity(intentAjustesApp)
         } catch (e: Exception) {
             Log.w("FCM_DEBUG", "No se pudo abrir Ajustes de la app: ${e.message}")
         }

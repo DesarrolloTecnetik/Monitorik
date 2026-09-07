@@ -1,0 +1,355 @@
+diff --git a/app/src/main/java/com/tecnetik/monitorik/MainActivity.kt b/app/src/main/java/com/tecnetik/monitorik/MainActivity.kt
+index f845d4b..436fe12 100644
+--- a/app/src/main/java/com/tecnetik/monitorik/MainActivity.kt
++++ b/app/src/main/java/com/tecnetik/monitorik/MainActivity.kt
+@@ -211,9 +211,27 @@ class MainActivity : AppCompatActivity() {
+         // pelear contra eso, calculamos el inset real y lo aplicamos a notchBar.
+         WindowCompat.setDecorFitsSystemWindows(window, false)
+ 
++        // Barra de estado y barra de navegación en blanco fijo (ya no dependen
++        // del color detectado en la web). Se fuerzan iconos oscuros para que
++        // sigan siendo legibles sobre fondo blanco.
+         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+-            window.statusBarColor = Color.parseColor("#111239")
+-            window.navigationBarColor = Color.parseColor("#0D0D2B")
++            window.statusBarColor = Color.WHITE
++            window.navigationBarColor = Color.WHITE
++        }
++
++        // Android agrega automáticamente un "scrim" oscuro (línea/sombra) sobre
++        // la barra de navegación y la de estado cuando detecta que el color de
++        // fondo es claro, para mantener contraste con los iconos del sistema.
++        // Con fondo blanco fijo eso se ve como una línea negra pegada arriba de
++        // la barra de navegación. La desactivamos explícitamente.
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
++            window.isNavigationBarContrastEnforced = false
++            window.isStatusBarContrastEnforced = false
++        }
++
++        WindowCompat.getInsetsController(window, window.decorView).apply {
++            isAppearanceLightStatusBars = true
++            isAppearanceLightNavigationBars = true
+         }
+ 
+         setContentView(R.layout.activity_main)
+@@ -550,26 +568,16 @@ class MainActivity : AppCompatActivity() {
+         }
+     }
+ 
++    // NOTA: la barra de estado y la de navegación ahora son blancas fijas
++    // (ver onCreate). Se deja el puente JS conectado por compatibilidad, pero
++    // estas funciones ya no aplican el color detectado en la web para no
++    // pisar el blanco fijo.
+     private fun aplicarColorNotch(hex: String?) {
+-        val color = parseColorSeguro(hex) ?: return
+-        if (color == currentNotchColor) return
+-        colorAnimNotch = animarColorDeVista(notchBar, currentNotchColor, color, colorAnimNotch)
+-        currentNotchColor = color
+-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+-            window.statusBarColor = color
+-        }
+-        ajustarIconosSistemaSegunColor(color, esBarraDeEstado = true)
++        // Sin efecto: color fijo en blanco.
+     }
+ 
+     private fun aplicarColorNavBar(hex: String?) {
+-        val color = parseColorSeguro(hex) ?: return
+-        if (color == currentNavColor) return
+-        colorAnimNav = animarColorDeVista(navBar, currentNavColor, color, colorAnimNav)
+-        currentNavColor = color
+-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+-            window.navigationBarColor = color
+-        }
+-        ajustarIconosSistemaSegunColor(color, esBarraDeEstado = false)
++        // Sin efecto: color fijo en blanco.
+     }
+ 
+     // Transición suave en vez de un cambio brusco de color, para que no se
+@@ -1022,36 +1030,52 @@ class MainActivity : AppCompatActivity() {
+         // antes de que el usuario responda al primero.
+         if (dialogoDivulgacionBackground?.isShowing == true) return
+ 
+-        dialogoDivulgacionBackground = AlertDialog.Builder(this)
+-            .setTitle("Ubicación en segundo plano")
+-            .setMessage(
+-                "Monitorik necesita acceder a tu ubicación incluso cuando la app está " +
+-                        "minimizada o la pantalla apagada, para que tu empresa pueda dar " +
+-                        "seguimiento a tu jornada laboral. Puedes desactivar esto en cualquier " +
+-                        "momento desde Ajustes del sistema."
+-            )
+-            .setPositiveButton("Continuar") { _, _ ->
+-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+-                    // Desde Android 11, el diálogo del sistema para
+-                    // ACCESS_BACKGROUND_LOCATION ya NO ofrece la opción
+-                    // "Permitir todo el tiempo" si se pide con
+-                    // requestPermissions(): como mucho da "Mientras se usa
+-                    // la app" o "Denegar", por lo que el permiso de fondo
+-                    // nunca queda concedido y el diálogo volvería a salir
+-                    // en un loop. La única forma de conseguirlo es mandar
+-                    // al usuario a Ajustes de la app.
+-                    abrirAjustesDeUbicacion()
+-                } else {
+-                    ActivityCompat.requestPermissions(
+-                        this,
+-                        arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION),
+-                        REQUEST_BACKGROUND_LOCATION
+-                    )
+-                }
+-            }
++        // Diálogo con layout propio (dialog_ubicacion_background.xml) en vez
++        // del AlertDialog.Builder por defecto, para que se vea como el modal
++        // nativo de permisos de Android (icono en cuadrado, título en
++        // negrita, botones tipo pill apilados) en lugar del diálogo gris de
++        // dos botones en línea.
++        val vistaDialogo = layoutInflater.inflate(R.layout.dialog_ubicacion_background, null)
++
++        val dialogo = AlertDialog.Builder(this)
++            .setView(vistaDialogo)
++            .setCancelable(true)
+             .setOnDismissListener { dialogoDivulgacionBackground = null }
+-            .setNegativeButton("Ahora no", null)
+-            .show()
++            .create()
++
++        // Fondo transparente en la ventana del diálogo: las esquinas
++        // redondeadas las da bg_dialog_permiso.xml sobre el LinearLayout
++        // raíz; si no se quita el fondo por defecto del diálogo, se verían
++        // esquinas cuadradas por detrás.
++        dialogo.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
++
++        vistaDialogo.findViewById<Button>(R.id.btnContinuarUbicacion).setOnClickListener {
++            dialogo.dismiss()
++            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
++                // Desde Android 11, el diálogo del sistema para
++                // ACCESS_BACKGROUND_LOCATION ya NO ofrece la opción
++                // "Permitir todo el tiempo" si se pide con
++                // requestPermissions(): como mucho da "Mientras se usa
++                // la app" o "Denegar", por lo que el permiso de fondo
++                // nunca queda concedido y el diálogo volvería a salir
++                // en un loop. La única forma de conseguirlo es mandar
++                // al usuario a Ajustes de la app.
++                abrirAjustesDeUbicacion()
++            } else {
++                ActivityCompat.requestPermissions(
++                    this,
++                    arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION),
++                    REQUEST_BACKGROUND_LOCATION
++                )
++            }
++        }
++
++        vistaDialogo.findViewById<Button>(R.id.btnAhoraNoUbicacion).setOnClickListener {
++            dialogo.dismiss()
++        }
++
++        dialogoDivulgacionBackground = dialogo
++        dialogo.show()
+     }
+ 
+     // Abre la pantalla de detalles de la app en Ajustes del sistema, donde
+diff --git a/app/src/main/res/drawable/bg_boton_dialogo_primario.xml b/app/src/main/res/drawable/bg_boton_dialogo_primario.xml
+new file mode 100644
+index 0000000..f3d5c9f
+--- /dev/null
++++ b/app/src/main/res/drawable/bg_boton_dialogo_primario.xml
+@@ -0,0 +1,15 @@
++<?xml version="1.0" encoding="utf-8"?>
++<selector xmlns:android="http://schemas.android.com/apk/res/android">
++    <item android:state_pressed="true">
++        <shape android:shape="rectangle">
++            <solid android:color="#0B5FCC" />
++            <corners android:radius="28dp" />
++        </shape>
++    </item>
++    <item>
++        <shape android:shape="rectangle">
++            <solid android:color="#0B84FF" />
++            <corners android:radius="28dp" />
++        </shape>
++    </item>
++</selector>
+diff --git a/app/src/main/res/drawable/bg_boton_dialogo_secundario.xml b/app/src/main/res/drawable/bg_boton_dialogo_secundario.xml
+new file mode 100644
+index 0000000..88019a3
+--- /dev/null
++++ b/app/src/main/res/drawable/bg_boton_dialogo_secundario.xml
+@@ -0,0 +1,15 @@
++<?xml version="1.0" encoding="utf-8"?>
++<selector xmlns:android="http://schemas.android.com/apk/res/android">
++    <item android:state_pressed="true">
++        <shape android:shape="rectangle">
++            <solid android:color="#4A4A4C" />
++            <corners android:radius="28dp" />
++        </shape>
++    </item>
++    <item>
++        <shape android:shape="rectangle">
++            <solid android:color="#3A3A3C" />
++            <corners android:radius="28dp" />
++        </shape>
++    </item>
++</selector>
+diff --git a/app/src/main/res/drawable/bg_dialog_permiso.xml b/app/src/main/res/drawable/bg_dialog_permiso.xml
+new file mode 100644
+index 0000000..2ee50e8
+--- /dev/null
++++ b/app/src/main/res/drawable/bg_dialog_permiso.xml
+@@ -0,0 +1,10 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!--
++    Fondo del diálogo de "Ubicación en segundo plano". Se diseñó para imitar
++    la apariencia del modal nativo de permisos de Android (esquinas muy
++    redondeadas, fondo casi negro), en vez del AlertDialog por defecto.
++-->
++<shape xmlns:android="http://schemas.android.com/apk/res/android">
++    <solid android:color="#1C1C1E" />
++    <corners android:radius="28dp" />
++</shape>
+diff --git a/app/src/main/res/drawable/bg_icon_dialogo_permiso.xml b/app/src/main/res/drawable/bg_icon_dialogo_permiso.xml
+new file mode 100644
+index 0000000..9f935c9
+--- /dev/null
++++ b/app/src/main/res/drawable/bg_icon_dialogo_permiso.xml
+@@ -0,0 +1,5 @@
++<?xml version="1.0" encoding="utf-8"?>
++<shape xmlns:android="http://schemas.android.com/apk/res/android">
++    <solid android:color="#3A3A3C" />
++    <corners android:radius="16dp" />
++</shape>
+diff --git a/app/src/main/res/drawable/ic_ubicacion_dialogo.xml b/app/src/main/res/drawable/ic_ubicacion_dialogo.xml
+new file mode 100644
+index 0000000..72115b6
+--- /dev/null
++++ b/app/src/main/res/drawable/ic_ubicacion_dialogo.xml
+@@ -0,0 +1,11 @@
++<?xml version="1.0" encoding="utf-8"?>
++<vector xmlns:android="http://schemas.android.com/apk/res/android"
++    android:width="24dp"
++    android:height="24dp"
++    android:viewportWidth="24"
++    android:viewportHeight="24"
++    android:tint="#FFFFFF">
++    <path
++        android:fillColor="#FF000000"
++        android:pathData="M12,2C8.13,2 5,5.13 5,9c0,5.25 7,13 7,13s7,-7.75 7,-13c0,-3.87 -3.13,-7 -7,-7zM12,11.5c-1.38,0 -2.5,-1.12 -2.5,-2.5s1.12,-2.5 2.5,-2.5 2.5,1.12 2.5,2.5 -1.12,2.5 -2.5,2.5z" />
++</vector>
+diff --git a/app/src/main/res/layout/activity_main.xml b/app/src/main/res/layout/activity_main.xml
+index 3d6acc4..a389744 100644
+--- a/app/src/main/res/layout/activity_main.xml
++++ b/app/src/main/res/layout/activity_main.xml
+@@ -118,7 +118,7 @@
+         android:layout_width="match_parent"
+         android:layout_height="0dp"
+         android:layout_gravity="top"
+-        android:background="@color/notch_bar_purple" />
++        android:background="@color/system_bar_white" />
+ 
+     <!-- Franja de la barra de navegación inferior: cubre tanto los 3 botones
+          digitales (Atrás/Home/Recientes) como la barra delgada de gestos,
+@@ -130,6 +130,6 @@
+         android:layout_width="match_parent"
+         android:layout_height="0dp"
+         android:layout_gravity="bottom"
+-        android:background="@color/monitorik_dark" />
++        android:background="@color/system_bar_white" />
+ 
+ </FrameLayout>
+\ No newline at end of file
+diff --git a/app/src/main/res/layout/dialog_ubicacion_background.xml b/app/src/main/res/layout/dialog_ubicacion_background.xml
+new file mode 100644
+index 0000000..bbc6a64
+--- /dev/null
++++ b/app/src/main/res/layout/dialog_ubicacion_background.xml
+@@ -0,0 +1,79 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!--
++    Diálogo de "Ubicación en segundo plano" con el mismo lenguaje visual que
++    el modal nativo de permisos de Android (icono en cuadrado redondeado,
++    título en negrita, mensaje centrado y botones tipo pill apilados en vez
++    del AlertDialog gris por defecto).
++-->
++<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
++    android:layout_width="match_parent"
++    android:layout_height="wrap_content"
++    android:orientation="vertical"
++    android:background="@drawable/bg_dialog_permiso"
++    android:paddingHorizontal="24dp"
++    android:paddingTop="28dp"
++    android:paddingBottom="20dp"
++    android:gravity="center_horizontal">
++
++    <FrameLayout
++        android:layout_width="56dp"
++        android:layout_height="56dp"
++        android:background="@drawable/bg_icon_dialogo_permiso"
++        android:layout_marginBottom="20dp">
++
++        <ImageView
++            android:layout_width="28dp"
++            android:layout_height="28dp"
++            android:layout_gravity="center"
++            android:src="@drawable/ic_ubicacion_dialogo"
++            android:contentDescription="@null" />
++    </FrameLayout>
++
++    <TextView
++        android:id="@+id/tituloDialogoUbicacion"
++        android:layout_width="wrap_content"
++        android:layout_height="wrap_content"
++        android:text="Ubicación en segundo plano"
++        android:textColor="#FFFFFF"
++        android:textSize="20sp"
++        android:textStyle="bold"
++        android:gravity="center"
++        android:fontFamily="sans-serif-medium"
++        android:layout_marginBottom="12dp" />
++
++    <TextView
++        android:id="@+id/mensajeDialogoUbicacion"
++        android:layout_width="wrap_content"
++        android:layout_height="wrap_content"
++        android:text="Monitorik necesita acceder a tu ubicación incluso cuando la app está minimizada o la pantalla apagada, para que tu empresa pueda dar seguimiento a tu jornada laboral. Puedes desactivar esto en cualquier momento desde Ajustes del sistema."
++        android:textColor="#C7C7CC"
++        android:textSize="14sp"
++        android:gravity="center"
++        android:lineSpacingExtra="2dp"
++        android:layout_marginBottom="24dp" />
++
++    <Button
++        android:id="@+id/btnContinuarUbicacion"
++        android:layout_width="match_parent"
++        android:layout_height="52dp"
++        android:text="Continuar"
++        android:textAllCaps="false"
++        android:textColor="#FFFFFF"
++        android:textSize="16sp"
++        android:textStyle="bold"
++        android:background="@drawable/bg_boton_dialogo_primario"
++        android:stateListAnimator="@null"
++        android:layout_marginBottom="10dp" />
++
++    <Button
++        android:id="@+id/btnAhoraNoUbicacion"
++        android:layout_width="match_parent"
++        android:layout_height="52dp"
++        android:text="Ahora no"
++        android:textAllCaps="false"
++        android:textColor="#FFFFFF"
++        android:textSize="16sp"
++        android:background="@drawable/bg_boton_dialogo_secundario"
++        android:stateListAnimator="@null" />
++
++</LinearLayout>
+diff --git a/app/src/main/res/values/colors.xml b/app/src/main/res/values/colors.xml
+index 9e68eb9..f6b1e0b 100644
+--- a/app/src/main/res/values/colors.xml
++++ b/app/src/main/res/values/colors.xml
+@@ -24,4 +24,7 @@
+ 
+ 
+     <color name="notch_bar_purple">#1A1B4B</color>
++
++    <!-- Barra de estado y barra de navegación: blanco fijo -->
++    <color name="system_bar_white">#FFFFFFFF</color>
+ </resources>
+\ No newline at end of file

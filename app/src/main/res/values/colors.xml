@@ -24,4 +24,7 @@
 
 
     <color name="notch_bar_purple">#1A1B4B</color>
+
+    <!-- Barra de estado y barra de navegación: blanco fijo -->
+    <color name="system_bar_white">#FFFFFFFF</color>
 </resources>

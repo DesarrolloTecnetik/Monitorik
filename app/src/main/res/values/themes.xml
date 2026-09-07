@@ -11,6 +11,15 @@
         <item name="windowSplashScreenAnimatedIcon">@android:color/transparent</item>
         <item name="windowSplashScreenAnimationDuration">0</item>
         <item name="postSplashScreenTheme">@style/Theme.Monitorik</item>
+
+        <!-- Sin esto, la barra de estado sale blanca por defecto durante el
+             splash del sistema (antes de que MainActivity.onCreate() tenga
+             oportunidad de fijar el color), ya que este tema no hereda
+             ningún valor morado para statusBarColor/navigationBarColor. -->
+        <item name="android:statusBarColor">#111239</item>
+        <item name="android:navigationBarColor">#0D0D2B</item>
+        <item name="android:windowLightStatusBar" tools:targetApi="m">false</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="o_mr1">false</item>
     </style>
 
     <!-- 2. TEMA PRINCIPAL: Sin modo pantalla completa/Edge-to-Edge -->
@@ -21,6 +30,14 @@
         <item name="colorPrimary">#111239</item>
         <item name="colorPrimaryDark">#0D0D2B</item>
         <item name="colorAccent">#FFFFFF</item>
+
+        <!-- Mismo respaldo que en el tema de splash: evita cualquier frame
+             con la barra de estado/navegación blanca antes de que
+             MainActivity.onCreate() aplique su propia lógica de color. -->
+        <item name="android:statusBarColor">#111239</item>
+        <item name="android:navigationBarColor">#0D0D2B</item>
+        <item name="android:windowLightStatusBar" tools:targetApi="m">false</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="o_mr1">false</item>
     </style>
 
 </resources>

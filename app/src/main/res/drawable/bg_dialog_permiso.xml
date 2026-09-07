@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Fondo del diálogo de "Ubicación en segundo plano". Se diseñó para imitar
+    la apariencia del modal nativo de permisos de Android (esquinas muy
+    redondeadas, fondo casi negro), en vez del AlertDialog por defecto.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <solid android:color="#1C1C1E" />
+    <corners android:radius="28dp" />
+</shape>
