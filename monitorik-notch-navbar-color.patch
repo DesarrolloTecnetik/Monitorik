@@ -19,7 +19,6 @@ import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
-import android.provider.Settings
 import android.util.Log
 import android.widget.TextView
 import android.widget.Button
@@ -91,20 +90,6 @@ class MainActivity : AppCompatActivity() {
     private var colorAnimNotch: ValueAnimator? = null
     private var colorAnimNav: ValueAnimator? = null
     private val hexColorRegex = Regex("^#[0-9A-Fa-f]{6}$")
-
-    // --- Diálogo de "Ubicación en segundo plano" ---
-    // dialogoDivulgacionBackground: referencia al diálogo actualmente visible,
-    // para nunca mostrar dos apilados si iniciarUbicacionSiCorresponde() se
-    // dispara varias veces seguidas (cada onPageFinished del WebView llama a
-    // esta cadena).
-    // yaSePidioBackgroundEstaSesion: una vez que el usuario vio el diálogo y
-    // tomó una decisión (Continuar o Ahora no) dentro de esta sesión de la
-    // Activity, no se lo vuelve a mostrar solo, aunque el WebView siga
-    // navegando. Si sigue sin conceder el permiso, se vuelve a evaluar recién
-    // la próxima vez que la Activity se recree (ej. la app se cierra y se
-    // abre de nuevo), no en cada carga de página.
-    private var dialogoDivulgacionBackground: AlertDialog? = null
-    private var yaSePidioBackgroundEstaSesion = false
 
     private var fileUploadCallback: ValueCallback<Array<Uri>>? = null
     private var photoURI: Uri? = null
@@ -338,15 +323,6 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         _isInBackground = false
         MonitorikApp.activeWebView = webView
-
-        // Si el usuario vino de Ajustes (por el flujo de "Ubicación en
-        // segundo plano" en Android 11+) y ahí concedió "Permitir todo el
-        // tiempo", esto arranca el servicio apenas vuelve a la app. Si
-        // todavía no lo concedió, no pasa nada más: yaSePidioBackgroundEstaSesion
-        // sigue en true y no se vuelve a mostrar el diálogo en este resume.
-        if (TokenManager.hasToken(this)) {
-            asegurarPermisosYArrancarServicio()
-        }
     }
 
     override fun onPause() {
@@ -998,15 +974,7 @@ class MainActivity : AppCompatActivity() {
             ) == PackageManager.PERMISSION_GRANTED
 
             if (!backgroundGranted) {
-                // Ya le mostramos el diálogo/pedido una vez en esta sesión:
-                // si el usuario todavía no lo concedió, no insistimos en
-                // cada navegación del WebView. Se vuelve a intentar solo si
-                // vuelve de Ajustes con el permiso ya concedido (ver
-                // onResume) o si la Activity se recrea de cero.
-                if (!yaSePidioBackgroundEstaSesion) {
-                    yaSePidioBackgroundEstaSesion = true
-                    mostrarDivulgacionYPedirBackground()
-                }
+                mostrarDivulgacionYPedirBackground()
                 return
             }
         }
@@ -1018,11 +986,7 @@ class MainActivity : AppCompatActivity() {
     //    ACCESS_BACKGROUND_LOCATION, o rechazan la app en revisión. Ajustar el
     //    texto real a la política de privacidad publicada.
     private fun mostrarDivulgacionYPedirBackground() {
-        // Evita apilar dos diálogos si esta función se llama más de una vez
-        // antes de que el usuario responda al primero.
-        if (dialogoDivulgacionBackground?.isShowing == true) return
-
-        dialogoDivulgacionBackground = AlertDialog.Builder(this)
+        AlertDialog.Builder(this)
             .setTitle("Ubicación en segundo plano")
             .setMessage(
                 "Monitorik necesita acceder a tu ubicación incluso cuando la app está " +
@@ -1031,41 +995,14 @@ class MainActivity : AppCompatActivity() {
                         "momento desde Ajustes del sistema."
             )
             .setPositiveButton("Continuar") { _, _ ->
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    // Desde Android 11, el diálogo del sistema para
-                    // ACCESS_BACKGROUND_LOCATION ya NO ofrece la opción
-                    // "Permitir todo el tiempo" si se pide con
-                    // requestPermissions(): como mucho da "Mientras se usa
-                    // la app" o "Denegar", por lo que el permiso de fondo
-                    // nunca queda concedido y el diálogo volvería a salir
-                    // en un loop. La única forma de conseguirlo es mandar
-                    // al usuario a Ajustes de la app.
-                    abrirAjustesDeUbicacion()
-                } else {
-                    ActivityCompat.requestPermissions(
-                        this,
-                        arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION),
-                        REQUEST_BACKGROUND_LOCATION
-                    )
-                }
+                ActivityCompat.requestPermissions(
+                    this,
+                    arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION),
+                    REQUEST_BACKGROUND_LOCATION
+                )
             }
-            .setOnDismissListener { dialogoDivulgacionBackground = null }
             .setNegativeButton("Ahora no", null)
             .show()
-    }
-
-    // Abre la pantalla de detalles de la app en Ajustes del sistema, donde
-    // Android 11+ permite cambiar el permiso de ubicación a "Permitir todo
-    // el tiempo". Es la única vía posible en R+ para ese permiso.
-    private fun abrirAjustesDeUbicacion() {
-        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-            data = Uri.fromParts("package", packageName, null)
-        }
-        try {
-            startActivity(intent)
-        } catch (e: Exception) {
-            Log.w("FCM_DEBUG", "No se pudo abrir Ajustes de la app: ${e.message}")
-        }
     }
 
     // 4. Callback de permisos "clásico" (ActivityCompat.requestPermissions),

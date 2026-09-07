@@ -7,7 +7,7 @@
     <color name="monitorik_bg">#111239</color>
     <color name="monitorik_blue">#1A1B4B</color>
     <!-- Botones de navegacións -->
-    <color name="monitorik_dark">#009688</color>
+    <color name="monitorik_dark">#1A1B4B</color>
 
     <!-- Color para el círculo de la notificación (Azul Monitorik) -->
     <color name="monitorik_push_circle">#4B5FD6</color>

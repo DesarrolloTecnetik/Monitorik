@@ -1,0 +1,356 @@
+diff --git a/app/src/main/java/com/tecnetik/monitorik/MainActivity.kt b/app/src/main/java/com/tecnetik/monitorik/MainActivity.kt
+index e7228e1..f845d4b 100644
+--- a/app/src/main/java/com/tecnetik/monitorik/MainActivity.kt
++++ b/app/src/main/java/com/tecnetik/monitorik/MainActivity.kt
+@@ -1,6 +1,8 @@
+ package com.tecnetik.monitorik
+ 
+ import android.Manifest
++import android.animation.ArgbEvaluator
++import android.animation.ValueAnimator
+ import android.app.AlertDialog
+ import android.content.Context
+ import android.content.Intent
+@@ -17,6 +19,7 @@ import android.os.Environment
+ import android.os.Handler
+ import android.os.Looper
+ import android.provider.MediaStore
++import android.provider.Settings
+ import android.util.Log
+ import android.widget.TextView
+ import android.widget.Button
+@@ -31,6 +34,7 @@ import androidx.core.view.ViewCompat
+ import androidx.core.view.WindowInsetsCompat
+ import android.webkit.CookieManager
+ import android.webkit.GeolocationPermissions
++import android.webkit.JavascriptInterface
+ import android.webkit.PermissionRequest
+ import android.webkit.ValueCallback
+ import android.webkit.WebChromeClient
+@@ -43,6 +47,7 @@ import androidx.appcompat.app.AppCompatActivity
+ import androidx.core.app.ActivityCompat
+ import androidx.core.content.ContextCompat
+ import androidx.core.content.FileProvider
++import androidx.core.graphics.ColorUtils
+ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+ import com.tecnetik.monitorik.location.LocationForegroundService
+ import com.tecnetik.monitorik.location.TokenManager
+@@ -77,6 +82,30 @@ class MainActivity : AppCompatActivity() {
+     private var countdownRemainingSec: Int = 0
+     private val URL_DESTINO = "https://tecnserv.com/monitorik/"
+ 
++    // --- Color dinámico de notchBar/navBar según el contenido de la página ---
++    // Arrancan con los mismos colores que ya tenía el layout (ver colors.xml),
++    // para que la primera transición anime desde el color correcto en vez de
++    // desde negro u otro valor por defecto.
++    private var currentNotchColor: Int = Color.parseColor("#1A1B4B")
++    private var currentNavColor: Int = Color.parseColor("#009688")
++    private var colorAnimNotch: ValueAnimator? = null
++    private var colorAnimNav: ValueAnimator? = null
++    private val hexColorRegex = Regex("^#[0-9A-Fa-f]{6}$")
++
++    // --- Diálogo de "Ubicación en segundo plano" ---
++    // dialogoDivulgacionBackground: referencia al diálogo actualmente visible,
++    // para nunca mostrar dos apilados si iniciarUbicacionSiCorresponde() se
++    // dispara varias veces seguidas (cada onPageFinished del WebView llama a
++    // esta cadena).
++    // yaSePidioBackgroundEstaSesion: una vez que el usuario vio el diálogo y
++    // tomó una decisión (Continuar o Ahora no) dentro de esta sesión de la
++    // Activity, no se lo vuelve a mostrar solo, aunque el WebView siga
++    // navegando. Si sigue sin conceder el permiso, se vuelve a evaluar recién
++    // la próxima vez que la Activity se recree (ej. la app se cierra y se
++    // abre de nuevo), no en cada carga de página.
++    private var dialogoDivulgacionBackground: AlertDialog? = null
++    private var yaSePidioBackgroundEstaSesion = false
++
+     private var fileUploadCallback: ValueCallback<Array<Uri>>? = null
+     private var photoURI: Uri? = null
+     private var isWebViewReady = false
+@@ -309,6 +338,15 @@ class MainActivity : AppCompatActivity() {
+         super.onResume()
+         _isInBackground = false
+         MonitorikApp.activeWebView = webView
++
++        // Si el usuario vino de Ajustes (por el flujo de "Ubicación en
++        // segundo plano" en Android 11+) y ahí concedió "Permitir todo el
++        // tiempo", esto arranca el servicio apenas vuelve a la app. Si
++        // todavía no lo concedió, no pasa nada más: yaSePidioBackgroundEstaSesion
++        // sigue en true y no se vuelve a mostrar el diálogo en este resume.
++        if (TokenManager.hasToken(this)) {
++            asegurarPermisosYArrancarServicio()
++        }
+     }
+ 
+     override fun onPause() {
+@@ -402,6 +440,167 @@ class MainActivity : AppCompatActivity() {
+         }
+     }
+ 
++    // ============================================================
++    // --- Color dinámico de notchBar/navBar según lo que se ve en pantalla ---
++    // ============================================================
++    //
++    // La app es un WebView apuntando a un sitio externo (tecnserv.com), así
++    // que no controlamos su HTML/CSS desde acá. En vez de depender de que la
++    // web nos avise su color "a mano", detectamos nosotros mismos qué color
++    // de fondo hay justo detrás de la franja del notch y de la franja de
++    // botones: tomamos el elemento que hay en ese punto de la pantalla
++    // (elementFromPoint) y subimos por sus ancestros hasta encontrar el
++    // primer background-color opaco. Así funciona para cualquier pantalla de
++    // la web sin tener que tocar su código.
++
++    private val colorDetectorScript = """
++        (function() {
++          if (window.__monitorikColorWatcherInstalled) return;
++          window.__monitorikColorWatcherInstalled = true;
++
++          function toHex(colorStr) {
++            if (!colorStr) return null;
++            var m = colorStr.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+)\s*)?\)/i);
++            if (!m) return null;
++            var r = parseInt(m[1], 10), g = parseInt(m[2], 10), b = parseInt(m[3], 10);
++            var a = m[4] !== undefined ? parseFloat(m[4]) : 1;
++            if (a === 0) return null; // totalmente transparente: seguimos buscando
++            function h(n) { var s = n.toString(16); return s.length === 1 ? '0' + s : s; }
++            return '#' + h(r) + h(g) + h(b);
++          }
++
++          function opaqueBackgroundAt(x, y) {
++            var el = document.elementFromPoint(x, y);
++            var guard = 0;
++            while (el && guard < 40) {
++              var hex = toHex(window.getComputedStyle(el).backgroundColor);
++              if (hex) return hex;
++              el = el.parentElement;
++              guard++;
++            }
++            var bodyHex = toHex(window.getComputedStyle(document.body).backgroundColor);
++            if (bodyHex) return bodyHex;
++            return toHex(window.getComputedStyle(document.documentElement).backgroundColor) || '#111239';
++          }
++
++          var lastTop = null, lastBottom = null;
++          function detectar() {
++            try {
++              var w = window.innerWidth;
++              var h = window.innerHeight;
++              var topColor = opaqueBackgroundAt(Math.floor(w / 2), 1);
++              var bottomColor = opaqueBackgroundAt(Math.floor(w / 2), h - 1);
++              if (topColor !== lastTop || bottomColor !== lastBottom) {
++                lastTop = topColor;
++                lastBottom = bottomColor;
++                if (window.AndroidColorBridge && window.AndroidColorBridge.onColorsDetected) {
++                  window.AndroidColorBridge.onColorsDetected(topColor, bottomColor);
++                }
++              }
++            } catch (e) {}
++          }
++
++          var pending = false;
++          function programarDeteccion() {
++            if (pending) return;
++            pending = true;
++            requestAnimationFrame(function() {
++              pending = false;
++              detectar();
++            });
++          }
++
++          detectar();
++          window.addEventListener('scroll', programarDeteccion, { passive: true });
++          window.addEventListener('resize', programarDeteccion);
++
++          var observer = new MutationObserver(programarDeteccion);
++          observer.observe(document.documentElement, {
++            attributes: true,
++            attributeFilter: ['style', 'class'],
++            subtree: true,
++            childList: true
++          });
++
++          // Red de seguridad: cubre transiciones/gradientes/canvas que cambian
++          // de color sin disparar mutaciones de DOM ni scroll.
++          setInterval(detectar, 1000);
++        })();
++    """.trimIndent()
++
++    // Puente expuesto a la web como "AndroidColorBridge". Solo recibe dos
++    // strings de color; se validan antes de usarlos (nunca confiar a ciegas
++    // en contenido que llega desde JS, aunque sea nuestro propio sitio).
++    private inner class ColorBridge {
++        @JavascriptInterface
++        fun onColorsDetected(topColorHex: String?, bottomColorHex: String?) {
++            runOnUiThread {
++                aplicarColorNotch(topColorHex)
++                aplicarColorNavBar(bottomColorHex)
++            }
++        }
++    }
++
++    private fun parseColorSeguro(hex: String?): Int? {
++        if (hex == null || !hexColorRegex.matches(hex)) return null
++        return try {
++            Color.parseColor(hex)
++        } catch (e: IllegalArgumentException) {
++            null
++        }
++    }
++
++    private fun aplicarColorNotch(hex: String?) {
++        val color = parseColorSeguro(hex) ?: return
++        if (color == currentNotchColor) return
++        colorAnimNotch = animarColorDeVista(notchBar, currentNotchColor, color, colorAnimNotch)
++        currentNotchColor = color
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
++            window.statusBarColor = color
++        }
++        ajustarIconosSistemaSegunColor(color, esBarraDeEstado = true)
++    }
++
++    private fun aplicarColorNavBar(hex: String?) {
++        val color = parseColorSeguro(hex) ?: return
++        if (color == currentNavColor) return
++        colorAnimNav = animarColorDeVista(navBar, currentNavColor, color, colorAnimNav)
++        currentNavColor = color
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
++            window.navigationBarColor = color
++        }
++        ajustarIconosSistemaSegunColor(color, esBarraDeEstado = false)
++    }
++
++    // Transición suave en vez de un cambio brusco de color, para que no se
++    // sienta como un parpadeo al pasar de una pantalla a otra de la web.
++    private fun animarColorDeVista(
++        view: View,
++        desde: Int,
++        hasta: Int,
++        animadorPrevio: ValueAnimator?
++    ): ValueAnimator {
++        animadorPrevio?.cancel()
++        return ValueAnimator.ofObject(ArgbEvaluator(), desde, hasta).apply {
++            duration = 300
++            addUpdateListener { anim -> view.setBackgroundColor(anim.animatedValue as Int) }
++            start()
++        }
++    }
++
++    // Si el color de fondo detectado es claro, los iconos del sistema
++    // (reloj, batería, navegación) pasan a modo oscuro para seguir siendo
++    // legibles, y viceversa.
++    private fun ajustarIconosSistemaSegunColor(color: Int, esBarraDeEstado: Boolean) {
++        val esClaro = ColorUtils.calculateLuminance(color) > 0.5
++        val controller = WindowCompat.getInsetsController(window, window.decorView)
++        if (esBarraDeEstado) {
++            controller.isAppearanceLightStatusBars = esClaro
++        } else {
++            controller.isAppearanceLightNavigationBars = esClaro
++        }
++    }
++
+     private fun obtenerTokenFCM() {
+         FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+             if (!task.isSuccessful) return@addOnCompleteListener
+@@ -444,6 +643,12 @@ class MainActivity : AppCompatActivity() {
+         CookieManager.getInstance().setAcceptCookie(true)
+         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
+ 
++        // Puente JS -> Kotlin: la página web (tecnserv.com/monitorik) reporta
++        // por acá el color real que hay detrás del notch y de la barra de
++        // botones, para que notchBar/navBar se pinten igual y no se note el
++        // corte con el contenido.
++        webView.addJavascriptInterface(ColorBridge(), "AndroidColorBridge")
++
+         webView.webViewClient = object : WebViewClient() {
+ 
+             override fun shouldOverrideUrlLoading(
+@@ -490,6 +695,11 @@ class MainActivity : AppCompatActivity() {
+                     imgSplash.visibility = View.GONE
+                 }
+ 
++                // Reinyectamos el detector de color en cada navegación: cada
++                // documento nuevo pierde el estado de window, así que el flag
++                // __monitorikColorWatcherInstalled también arranca de cero.
++                webView.evaluateJavascript(colorDetectorScript, null)
++
+                 pendingFcmToken?.let { enviarTokenFcmAWebView(it) }
+ 
+                 // Arranca (o reintenta) el flujo de ubicación en background ahora que
+@@ -788,7 +998,15 @@ class MainActivity : AppCompatActivity() {
+             ) == PackageManager.PERMISSION_GRANTED
+ 
+             if (!backgroundGranted) {
+-                mostrarDivulgacionYPedirBackground()
++                // Ya le mostramos el diálogo/pedido una vez en esta sesión:
++                // si el usuario todavía no lo concedió, no insistimos en
++                // cada navegación del WebView. Se vuelve a intentar solo si
++                // vuelve de Ajustes con el permiso ya concedido (ver
++                // onResume) o si la Activity se recrea de cero.
++                if (!yaSePidioBackgroundEstaSesion) {
++                    yaSePidioBackgroundEstaSesion = true
++                    mostrarDivulgacionYPedirBackground()
++                }
+                 return
+             }
+         }
+@@ -800,7 +1018,11 @@ class MainActivity : AppCompatActivity() {
+     //    ACCESS_BACKGROUND_LOCATION, o rechazan la app en revisión. Ajustar el
+     //    texto real a la política de privacidad publicada.
+     private fun mostrarDivulgacionYPedirBackground() {
+-        AlertDialog.Builder(this)
++        // Evita apilar dos diálogos si esta función se llama más de una vez
++        // antes de que el usuario responda al primero.
++        if (dialogoDivulgacionBackground?.isShowing == true) return
++
++        dialogoDivulgacionBackground = AlertDialog.Builder(this)
+             .setTitle("Ubicación en segundo plano")
+             .setMessage(
+                 "Monitorik necesita acceder a tu ubicación incluso cuando la app está " +
+@@ -809,16 +1031,43 @@ class MainActivity : AppCompatActivity() {
+                         "momento desde Ajustes del sistema."
+             )
+             .setPositiveButton("Continuar") { _, _ ->
+-                ActivityCompat.requestPermissions(
+-                    this,
+-                    arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION),
+-                    REQUEST_BACKGROUND_LOCATION
+-                )
++                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
++                    // Desde Android 11, el diálogo del sistema para
++                    // ACCESS_BACKGROUND_LOCATION ya NO ofrece la opción
++                    // "Permitir todo el tiempo" si se pide con
++                    // requestPermissions(): como mucho da "Mientras se usa
++                    // la app" o "Denegar", por lo que el permiso de fondo
++                    // nunca queda concedido y el diálogo volvería a salir
++                    // en un loop. La única forma de conseguirlo es mandar
++                    // al usuario a Ajustes de la app.
++                    abrirAjustesDeUbicacion()
++                } else {
++                    ActivityCompat.requestPermissions(
++                        this,
++                        arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION),
++                        REQUEST_BACKGROUND_LOCATION
++                    )
++                }
+             }
++            .setOnDismissListener { dialogoDivulgacionBackground = null }
+             .setNegativeButton("Ahora no", null)
+             .show()
+     }
+ 
++    // Abre la pantalla de detalles de la app en Ajustes del sistema, donde
++    // Android 11+ permite cambiar el permiso de ubicación a "Permitir todo
++    // el tiempo". Es la única vía posible en R+ para ese permiso.
++    private fun abrirAjustesDeUbicacion() {
++        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
++            data = Uri.fromParts("package", packageName, null)
++        }
++        try {
++            startActivity(intent)
++        } catch (e: Exception) {
++            Log.w("FCM_DEBUG", "No se pudo abrir Ajustes de la app: ${e.message}")
++        }
++    }
++
+     // 4. Callback de permisos "clásico" (ActivityCompat.requestPermissions),
+     //    independiente del requestPermissionLauncher que ya usás para
+     //    cámara/archivos, que usa el contrato nuevo y no pasa por acá.
